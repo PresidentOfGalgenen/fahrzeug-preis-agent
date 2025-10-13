@@ -22,7 +22,7 @@ def save_feedback(data):
     """Speichert neues Feedback in der Datei"""
     feedback_list = load_feedback()
     feedback_list.append(data)
-    with open(FEEDBACK_FILE, 'r', encoding='utf-8') as f:
+    with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
         json.dump(feedback_list, f, indent=2, ensure_ascii=False)
 
 # ==========================================
