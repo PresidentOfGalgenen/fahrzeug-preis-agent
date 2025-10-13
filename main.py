@@ -17,13 +17,20 @@ def load_feedback():
     return []
 
 def save_feedback(data):
+    """Speichert neues Feedback in der Datei"""
     try:
+        # Prüfe ob Datei existiert, wenn nicht erstelle leere Liste
+        if not os.path.exists(FEEDBACK_FILE):
+            with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        
         feedback_list = load_feedback()
         feedback_list.append(data)
+        
         with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
             json.dump(feedback_list, f, indent=2, ensure_ascii=False)
     except Exception as e:
-        print(f"Could not save feedback: {e}")
+        print(f"Warning: Could not save feedback: {e}")
 
 # ==========================================
 # 🚗 MEGA FAHRZEUG-DATENBANK (200+ Fahrzeuge)
