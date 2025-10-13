@@ -22,7 +22,7 @@ def save_feedback(data):
     """Speichert neues Feedback in der Datei"""
     feedback_list = load_feedback()
     feedback_list.append(data)
-    with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
+    with open(FEEDBACK_FILE, 'r', encoding='utf-8') as f:
         json.dump(feedback_list, f, indent=2, ensure_ascii=False)
 
 # ==========================================
@@ -56,19 +56,19 @@ def detect_category(brand, model):
     Erkennt die Fahrzeugkategorie basierend auf Marke und Modell
     """
     search_term = f"{brand} {model}".lower()
-
+    
     for category, keywords in BRAND_CATEGORIES.items():
         for keyword in keywords:
             if keyword.lower() in search_term:
                 return category
-
+    
     # Standard-Kategorie wenn nichts passt
     return "Mittel"
 
 def calculate_price(vehicle_data):
     """
     🧠 Hauptfunktion: Berechnet den Mietpreis
-
+    
     Parameter:
     - brand: Marke (z.B. "BMW")
     - model: Modell (z.B. "3er")
@@ -78,7 +78,7 @@ def calculate_price(vehicle_data):
     - postal_code: PLZ (für regionale Anpassung - später)
     - category: Fahrzeugklasse (optional, wird sonst automatisch erkannt)
     """
-
+    
     # 1. Kategorie bestimmen
     category = vehicle_data.get('category')
     if not category:
@@ -86,18 +86,18 @@ def calculate_price(vehicle_data):
             vehicle_data.get('brand', ''),
             vehicle_data.get('model', '')
         )
-
+    
     # 2. Basis-Preis holen
     base_price = BASE_PRICES.get(category, 12.0)
-
+    
     # 3. Alter des Fahrzeugs berechnen
     current_year = datetime.now().year
     vehicle_age = current_year - int(vehicle_data.get('year', current_year))
-
+    
     # 4. Abschreibung pro Jahr (5% bis max. 40%)
     depreciation = min(vehicle_age * 0.05, 0.40)
     price_after_age = base_price * (1 - depreciation)
-
+    
     # 5. Kilometerstand-Faktor
     mileage = int(vehicle_data.get('mileage', 0))
     if mileage < 50000:
@@ -108,9 +108,9 @@ def calculate_price(vehicle_data):
         mileage_factor = 0.9
     else:
         mileage_factor = 0.8
-
+    
     price_after_mileage = price_after_age * mileage_factor
-
+    
     # 6. Zustandsfaktor
     condition_factors = {
         "Sehr gut": 1.15,
@@ -120,16 +120,16 @@ def calculate_price(vehicle_data):
     }
     condition = vehicle_data.get('condition', 'Gut')
     condition_factor = condition_factors.get(condition, 1.0)
-
+    
     final_price_per_hour = price_after_mileage * condition_factor
-
+    
     # 7. Tagespreis (6 Stunden = 1 Tag, mit Rabatt)
     price_per_day = final_price_per_hour * 6 * 0.85  # 15% Rabatt für Tagesmiete
-
+    
     # 8. Runde auf 0.50 EUR
     final_price_per_hour = round(final_price_per_hour * 2) / 2
     price_per_day = round(price_per_day * 2) / 2
-
+    
     # 9. Rückgabe mit Details
     return {
         "suggested_price_per_hour": final_price_per_hour,
@@ -180,7 +180,7 @@ def home():
 def calculate_endpoint():
     """
     🎯 Hauptendpoint: Berechnet den Preis
-
+    
     Beispiel-Request (JSON):
     {
         "brand": "VW",
@@ -194,20 +194,20 @@ def calculate_endpoint():
     try:
         # Daten aus Request holen
         data = request.get_json()
-
+        
         # Validierung
         required_fields = ['brand', 'model', 'year', 'mileage', 'condition']
         missing_fields = [field for field in required_fields if field not in data]
-
+        
         if missing_fields:
             return jsonify({
                 "error": "Fehlende Pflichtfelder",
                 "missing": missing_fields
             }), 400
-
+        
         # Preis berechnen
         result = calculate_price(data)
-
+        
         # Anfrage loggen (für späteres Lernen)
         log_entry = {
             "timestamp": datetime.now().isoformat(),
@@ -216,13 +216,13 @@ def calculate_endpoint():
             "type": "calculation"
         }
         save_feedback(log_entry)
-
+        
         return jsonify({
             "success": True,
             "data": result,
             "message": "Preis erfolgreich berechnet"
         })
-
+        
     except Exception as e:
         return jsonify({
             "success": False,
@@ -233,7 +233,7 @@ def calculate_endpoint():
 def feedback_endpoint():
     """
     📝 Feedback-Endpoint: Nutzer können sagen, ob der Preis gut war
-
+    
     Beispiel-Request:
     {
         "calculation_id": "2024-01-15T10:30:00",
@@ -244,19 +244,19 @@ def feedback_endpoint():
     """
     try:
         data = request.get_json()
-
+        
         feedback_entry = {
             "timestamp": datetime.now().isoformat(),
             "feedback": data,
             "type": "user_feedback"
         }
         save_feedback(feedback_entry)
-
+        
         return jsonify({
             "success": True,
             "message": "Feedback gespeichert. Danke!"
         })
-
+        
     except Exception as e:
         return jsonify({
             "success": False,
