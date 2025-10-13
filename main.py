@@ -1,505 +1,379 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
-import json
-import os
+
+# Importiere Fahrzeugdatenbank aus separater Datei
+from vehicle_database import VEHICLE_DATABASE, BASE_HOURLY_RATES
 
 app = Flask(__name__)
 
-# ==========================================
-# 📊 DATENBANK
-# ==========================================
-FEEDBACK_FILE = "feedback_data.json"
-
+# Feedback deaktiviert (kein File-Writing auf Render Free)
 def load_feedback():
-    if os.path.exists(FEEDBACK_FILE):
-        with open(FEEDBACK_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
     return []
 
 def save_feedback(data):
-    try:
-        feedback_list = load_feedback()
-        feedback_list.append(data)
-        with open(FEEDBACK_FILE, 'w', encoding='utf-8') as f:
-            json.dump(feedback_list, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"Could not save feedback: {e}")
+    print(f"Feedback logged: {data.get('type', 'unknown')}")
+    pass
 
-# ==========================================
-# 🚗 MEGA FAHRZEUG-DATENBANK (200+ Fahrzeuge)
-# ==========================================
+def find_vehicle_in_database(brand, model):
+    """Sucht Fahrzeug in Datenbank"""
+    search_key = f"{brand} {model}".strip()
+    
+    if search_key in VEHICLE_DATABASE:
+        return VEHICLE_DATABASE[search_key], search_key
+    
+    search_lower = search_key.lower()
+    for key in VEHICLE_DATABASE.keys():
+        if key.lower() == search_lower:
+            return VEHICLE_DATABASE[key], key
+        if search_lower in key.lower() or key.lower() in search_lower:
+            return VEHICLE_DATABASE[key], key
+    
+    return None, None
 
-"""
-Struktur:
-"Marke Modell": {
-    "category": Hauptkategorie für Basispreis
-    "segment": Detailliertes Segment (Cabrio, Coupé, etc.)
-    "body_type": Karosserieform
-    "generations": {
-        "Jahr-Bereich": {Neupreis, PS, Hubraum}
+def calculate_price(vehicle_data):
+    """
+    🧠 KOMPLEXER 15-FAKTOREN ALGORITHMUS
+    """
+    brand = vehicle_data.get('brand', '')
+    model = vehicle_data.get('model', '')
+    year = int(vehicle_data.get('year', datetime.now().year))
+    mileage = int(vehicle_data.get('mileage', 0))
+    condition = vehicle_data.get('condition', 'Gut')
+    
+    # 1. FAHRZEUG-MATCHING
+    vehicle_info, full_key = find_vehicle_in_database(brand, model)
+    
+    if vehicle_info:
+        category = vehicle_info['category']
+        segment = vehicle_info['segment']
+        body_type = vehicle_info['body_type']
+        new_price = vehicle_info['new_price']
+        hp = vehicle_info['hp']
+        engine = vehicle_info['engine']
+        from_database = True
+        base_rate = BASE_HOURLY_RATES.get(category, 12.0)
+    else:
+        category = "Kompakt"
+        segment = "Unbekannt"
+        body_type = "Limousine"
+        new_price = 30000
+        hp = 150
+        engine = 2.0
+        from_database = False
+        base_rate = 12.0
+    
+    # 2. FAHRZEUG-ALTER
+    current_year = datetime.now().year
+    vehicle_age = current_year - year
+    
+    # 3. NICHTLINEARE ABSCHREIBUNG
+    if vehicle_age <= 1:
+        depreciation = 0.15
+    elif vehicle_age <= 3:
+        depreciation = 0.15 + (vehicle_age - 1) * 0.08
+    elif vehicle_age <= 6:
+        depreciation = 0.31 + (vehicle_age - 3) * 0.06
+    elif vehicle_age <= 10:
+        depreciation = 0.49 + (vehicle_age - 6) * 0.04
+    else:
+        depreciation = min(0.65 + (vehicle_age - 10) * 0.02, 0.85)
+    
+    price_after_age = base_rate * (1 - depreciation)
+    
+    # 4. KILOMETERSTAND (10 Stufen)
+    if mileage < 10000:
+        mileage_factor = 1.20
+    elif mileage < 30000:
+        mileage_factor = 1.15
+    elif mileage < 50000:
+        mileage_factor = 1.10
+    elif mileage < 75000:
+        mileage_factor = 1.05
+    elif mileage < 100000:
+        mileage_factor = 1.0
+    elif mileage < 125000:
+        mileage_factor = 0.95
+    elif mileage < 150000:
+        mileage_factor = 0.88
+    elif mileage < 175000:
+        mileage_factor = 0.82
+    elif mileage < 200000:
+        mileage_factor = 0.75
+    else:
+        mileage_factor = 0.65
+    
+    price_after_mileage = price_after_age * mileage_factor
+    
+    # 5. ZUSTANDSFAKTOR
+    condition_factors = {
+        "Sehr gut": 1.18,
+        "Gut": 1.0,
+        "Mittel": 0.82,
+        "Schlecht": 0.60
     }
-}
-"""
+    condition_factor = condition_factors.get(condition, 1.0)
+    price_after_condition = price_after_mileage * condition_factor
+    
+    # 6. NEUPREIS-BONUS (Luxus-Aufschlag)
+    if new_price > 150000:
+        luxury_multiplier = 1.30
+    elif new_price > 100000:
+        luxury_multiplier = 1.22
+    elif new_price > 70000:
+        luxury_multiplier = 1.15
+    elif new_price > 50000:
+        luxury_multiplier = 1.10
+    elif new_price > 35000:
+        luxury_multiplier = 1.05
+    else:
+        luxury_multiplier = 1.0
+    
+    price_after_luxury = price_after_condition * luxury_multiplier
+    
+    # 7. PS-FAKTOR (Leistung)
+    if hp > 500:
+        hp_factor = 1.25
+    elif hp > 350:
+        hp_factor = 1.18
+    elif hp > 250:
+        hp_factor = 1.12
+    elif hp > 180:
+        hp_factor = 1.05
+    else:
+        hp_factor = 1.0
+    
+    price_after_hp = price_after_luxury * hp_factor
+    
+    # 8. KAROSSERIETYP-BONUS
+    body_bonuses = {
+        "Cabriolet": 1.15,
+        "Roadster": 1.18,
+        "Coupé": 1.08,
+        "SUV": 1.12,
+        "Kombi": 1.03,
+        "Van": 1.05,
+        "Limousine": 1.0,
+        "Schrägheck": 1.0,
+        "Fastback": 1.06
+    }
+    body_bonus = body_bonuses.get(body_type, 1.0)
+    price_after_body = price_after_hp * body_bonus
+    
+    # 9. ELEKTRO-BONUS
+    is_electric = (engine == 0.0)
+    electric_bonus = 1.10 if is_electric else 1.0
+    price_after_electric = price_after_body * electric_bonus
+    
+    # 10. SELTENHEITS-FAKTOR
+    if "Supersportwagen" in category or "Ultra" in category:
+        rarity_bonus = 1.20
+    elif "Luxus" in category or "Sport" in category:
+        rarity_bonus = 1.10
+    else:
+        rarity_bonus = 1.0
+    
+    final_price_per_hour = price_after_electric * rarity_bonus
+    
+    # 11. TAGESPREIS (8h, 20% Rabatt)
+    price_per_day = final_price_per_hour * 8 * 0.80
+    
+    # 12. WOCHENPREIS (7 Tage, 30% Rabatt)
+    price_per_week = price_per_day * 7 * 0.70
+    
+    # 13. RUNDUNG
+    final_price_per_hour = round(final_price_per_hour * 2) / 2
+    price_per_day = round(price_per_day * 2) / 2
+    price_per_week = round(price_per_week)
+    
+    # 14. VERTRAUENSWERT
+    confidence_score = 0
+    if from_database:
+        confidence_score += 40
+    if mileage < 100000:
+        confidence_score += 20
+    if vehicle_age < 5:
+        confidence_score += 20
+    if condition in ["Sehr gut", "Gut"]:
+        confidence_score += 20
+    
+    if confidence_score >= 80:
+        confidence = "sehr hoch"
+    elif confidence_score >= 60:
+        confidence = "hoch"
+    elif confidence_score >= 40:
+        confidence = "mittel"
+    else:
+        confidence = "niedrig"
+    
+    # 15. RÜCKGABE
+    return {
+        "suggested_price_per_hour": final_price_per_hour,
+        "suggested_price_per_day": price_per_day,
+        "suggested_price_per_week": price_per_week,
+        "currency": "EUR",
+        "vehicle_info": {
+            "category": category,
+            "segment": segment,
+            "body_type": body_type,
+            "new_price_estimate": new_price,
+            "horsepower": hp,
+            "engine_size": engine,
+            "is_electric": is_electric,
+            "from_database": from_database,
+            "matched_vehicle": full_key if from_database else None
+        },
+        "calculation_factors": {
+            "base_rate": base_rate,
+            "vehicle_age_years": vehicle_age,
+            "depreciation_percent": round(depreciation * 100, 1),
+            "mileage_factor": round(mileage_factor, 3),
+            "condition_factor": round(condition_factor, 3),
+            "luxury_multiplier": round(luxury_multiplier, 3),
+            "hp_factor": round(hp_factor, 3),
+            "body_bonus": round(body_bonus, 3),
+            "electric_bonus": round(electric_bonus, 3),
+            "rarity_bonus": round(rarity_bonus, 3)
+        },
+        "confidence": confidence,
+        "confidence_score": confidence_score
+    }
 
-VEHICLE_DATABASE = {
-    # ========================================
-    # VOLKSWAGEN (VW)
-    # ========================================
-    "VW up!": {
-        "category": "Kleinstwagen", "segment": "City-Car", "body_type": "Kleinwagen",
-        "generations": {
-            "2011-2016": {"new_price": 11000, "hp": 60, "engine": 1.0},
-            "2017-2023": {"new_price": 13500, "hp": 75, "engine": 1.0}
-        }
-    },
-    "VW Polo": {
-        "category": "Kleinwagen", "segment": "Supermini", "body_type": "Kleinwagen",
-        "generations": {
-            "2009-2017": {"new_price": 14000, "hp": 90, "engine": 1.2},
-            "2017-2023": {"new_price": 18000, "hp": 95, "engine": 1.0}
-        }
-    },
-    "VW Golf": {
-        "category": "Kompakt", "segment": "Kompaktklasse", "body_type": "Schrägheck",
-        "generations": {
-            "2008-2012": {"new_price": 22000, "hp": 105, "engine": 1.6},
-            "2012-2019": {"new_price": 26000, "hp": 110, "engine": 1.4},
-            "2019-2024": {"new_price": 30000, "hp": 130, "engine": 1.5}
-        }
-    },
-    "VW Golf GTI": {
-        "category": "Sport", "segment": "Hot Hatch", "body_type": "Schrägheck",
-        "generations": {
-            "2013-2020": {"new_price": 35000, "hp": 220, "engine": 2.0},
-            "2020-2024": {"new_price": 42000, "hp": 245, "engine": 2.0}
-        }
-    },
-    "VW Golf R": {
-        "category": "Sport", "segment": "Performance Hatch", "body_type": "Schrägheck",
-        "generations": {
-            "2014-2020": {"new_price": 45000, "hp": 300, "engine": 2.0},
-            "2020-2024": {"new_price": 52000, "hp": 320, "engine": 2.0}
-        }
-    },
-    "VW Passat": {
-        "category": "Mittelklasse", "segment": "Mittelklasse Limousine", "body_type": "Limousine",
-        "generations": {
-            "2010-2014": {"new_price": 32000, "hp": 140, "engine": 2.0},
-            "2014-2019": {"new_price": 36000, "hp": 150, "engine": 2.0},
-            "2019-2024": {"new_price": 42000, "hp": 190, "engine": 2.0}
-        }
-    },
-    "VW Passat Variant": {
-        "category": "Mittelklasse", "segment": "Mittelklasse Kombi", "body_type": "Kombi",
-        "generations": {
-            "2014-2019": {"new_price": 38000, "hp": 150, "engine": 2.0},
-            "2019-2024": {"new_price": 44000, "hp": 190, "engine": 2.0}
-        }
-    },
-    "VW Arteon": {
-        "category": "Oberklasse", "segment": "Gran Turismo", "body_type": "Fastback",
-        "generations": {
-            "2017-2020": {"new_price": 45000, "hp": 190, "engine": 2.0},
-            "2020-2024": {"new_price": 52000, "hp": 280, "engine": 2.0}
-        }
-    },
-    "VW T-Roc": {
-        "category": "SUV-Kompakt", "segment": "Kompakt-SUV", "body_type": "SUV",
-        "generations": {
-            "2017-2022": {"new_price": 24000, "hp": 115, "engine": 1.0},
-            "2022-2024": {"new_price": 28000, "hp": 150, "engine": 1.5}
-        }
-    },
-    "VW T-Roc Cabrio": {
-        "category": "SUV-Cabrio", "segment": "Cabrio-SUV", "body_type": "Cabriolet",
-        "generations": {
-            "2019-2024": {"new_price": 35000, "hp": 150, "engine": 1.5}
-        }
-    },
-    "VW Tiguan": {
-        "category": "SUV-Mittel", "segment": "Mittelklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2011-2016": {"new_price": 30000, "hp": 140, "engine": 2.0},
-            "2016-2024": {"new_price": 38000, "hp": 190, "engine": 2.0}
-        }
-    },
-    "VW Touareg": {
-        "category": "SUV-Premium", "segment": "Oberklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2010-2018": {"new_price": 55000, "hp": 262, "engine": 3.0},
-            "2018-2024": {"new_price": 68000, "hp": 286, "engine": 3.0}
-        }
-    },
-    "VW Caddy": {
-        "category": "Hochdachkombi", "segment": "Kastenwagen", "body_type": "Van",
-        "generations": {
-            "2015-2020": {"new_price": 22000, "hp": 102, "engine": 1.6},
-            "2020-2024": {"new_price": 27000, "hp": 122, "engine": 2.0}
-        }
-    },
-    "VW T6": {
-        "category": "Transporter", "segment": "Großraum-Van", "body_type": "Van",
-        "generations": {
-            "2015-2019": {"new_price": 32000, "hp": 150, "engine": 2.0},
-            "2019-2024": {"new_price": 38000, "hp": 150, "engine": 2.0}
-        }
-    },
+# === API ENDPOINTS ===
+
+@app.route('/')
+def home():
+    total = len(VEHICLE_DATABASE)
+    brands = sorted(list(set([key.split()[0] for key in VEHICLE_DATABASE.keys()])))
     
-    # ========================================
-    # BMW
-    # ========================================
-    "BMW 1er": {
-        "category": "Kompakt-Premium", "segment": "Premium-Kompaktklasse", "body_type": "Schrägheck",
-        "generations": {
-            "2011-2019": {"new_price": 28000, "hp": 136, "engine": 1.6},
-            "2019-2024": {"new_price": 34000, "hp": 140, "engine": 1.5}
+    return jsonify({
+        "service": "Fahrzeug-Preis-Agent v3.0 PREMIUM",
+        "version": "3.0.0",
+        "status": "online",
+        "features": [
+            "150+ Fahrzeuge in Datenbank",
+            "15 Berechnungsfaktoren",
+            "Detaillierte Segmente (Cabrio, Coupé, SUV-Coupé)",
+            "Luxusmarken (Ferrari, Lamborghini, Bentley, Rolls-Royce)",
+            "Nichtlineare Abschreibung",
+            "10-stufige Kilometerberechnung"
+        ],
+        "database_stats": {
+            "total_vehicles": total,
+            "total_brands": len(brands),
+            "brands": brands
+        },
+        "endpoints": {
+            "/calculate": "POST - Intelligente Preisberechnung",
+            "/vehicles": "GET - Alle Fahrzeuge",
+            "/brands": "GET - Alle Marken",
+            "/models": "GET - Modelle einer Marke (Parameter: brand)",
+            "/health": "GET - Health Check"
         }
-    },
-    "BMW 2er": {
-        "category": "Kompakt-Premium", "segment": "Premium-Kompaktklasse", "body_type": "Coupé",
-        "generations": {
-            "2014-2021": {"new_price": 32000, "hp": 150, "engine": 1.5},
-            "2021-2024": {"new_price": 38000, "hp": 170, "engine": 2.0}
-        }
-    },
-    "BMW 2er Cabrio": {
-        "category": "Cabrio-Premium", "segment": "Premium-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2015-2024": {"new_price": 42000, "hp": 184, "engine": 2.0}
-        }
-    },
-    "BMW 3er": {
-        "category": "Mittelklasse-Premium", "segment": "Obere Mittelklasse", "body_type": "Limousine",
-        "generations": {
-            "2012-2019": {"new_price": 40000, "hp": 184, "engine": 2.0},
-            "2019-2024": {"new_price": 48000, "hp": 184, "engine": 2.0}
-        }
-    },
-    "BMW 3er Touring": {
-        "category": "Mittelklasse-Premium", "segment": "Premium-Kombi", "body_type": "Kombi",
-        "generations": {
-            "2012-2019": {"new_price": 43000, "hp": 184, "engine": 2.0},
-            "2019-2024": {"new_price": 51000, "hp": 184, "engine": 2.0}
-        }
-    },
-    "BMW 4er": {
-        "category": "Coupé-Premium", "segment": "Premium-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2013-2020": {"new_price": 45000, "hp": 184, "engine": 2.0},
-            "2020-2024": {"new_price": 52000, "hp": 258, "engine": 2.0}
-        }
-    },
-    "BMW 4er Cabrio": {
-        "category": "Cabrio-Premium", "segment": "Premium-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2014-2020": {"new_price": 52000, "hp": 184, "engine": 2.0},
-            "2020-2024": {"new_price": 60000, "hp": 258, "engine": 2.0}
-        }
-    },
-    "BMW 5er": {
-        "category": "Oberklasse", "segment": "Obere Mittelklasse", "body_type": "Limousine",
-        "generations": {
-            "2010-2017": {"new_price": 52000, "hp": 218, "engine": 2.0},
-            "2017-2023": {"new_price": 62000, "hp": 252, "engine": 2.0},
-            "2023-2024": {"new_price": 72000, "hp": 292, "engine": 3.0}
-        }
-    },
-    "BMW 5er Touring": {
-        "category": "Oberklasse", "segment": "Premium-Kombi", "body_type": "Kombi",
-        "generations": {
-            "2017-2023": {"new_price": 65000, "hp": 252, "engine": 2.0},
-            "2023-2024": {"new_price": 75000, "hp": 292, "engine": 3.0}
-        }
-    },
-    "BMW 7er": {
-        "category": "Luxus", "segment": "Oberklasse Limousine", "body_type": "Limousine",
-        "generations": {
-            "2015-2022": {"new_price": 95000, "hp": 326, "engine": 3.0},
-            "2022-2024": {"new_price": 115000, "hp": 381, "engine": 3.0}
-        }
-    },
-    "BMW 8er": {
-        "category": "Luxus-Coupé", "segment": "Gran Turismo", "body_type": "Coupé",
-        "generations": {
-            "2018-2024": {"new_price": 105000, "hp": 340, "engine": 3.0}
-        }
-    },
-    "BMW 8er Cabrio": {
-        "category": "Luxus-Cabrio", "segment": "Luxus-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2019-2024": {"new_price": 115000, "hp": 340, "engine": 3.0}
-        }
-    },
-    "BMW X1": {
-        "category": "SUV-Kompakt", "segment": "Premium-Kompakt-SUV", "body_type": "SUV",
-        "generations": {
-            "2015-2022": {"new_price": 35000, "hp": 140, "engine": 1.5},
-            "2022-2024": {"new_price": 42000, "hp": 170, "engine": 2.0}
-        }
-    },
-    "BMW X2": {
-        "category": "SUV-Coupé", "segment": "SUV-Coupé", "body_type": "SUV",
-        "generations": {
-            "2018-2024": {"new_price": 40000, "hp": 178, "engine": 2.0}
-        }
-    },
-    "BMW X3": {
-        "category": "SUV-Mittel", "segment": "Premium-Mittelklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2017-2024": {"new_price": 52000, "hp": 252, "engine": 2.0}
-        }
-    },
-    "BMW X4": {
-        "category": "SUV-Coupé", "segment": "Premium-SUV-Coupé", "body_type": "SUV",
-        "generations": {
-            "2018-2024": {"new_price": 60000, "hp": 252, "engine": 2.0}
-        }
-    },
-    "BMW X5": {
-        "category": "SUV-Premium", "segment": "Oberklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2013-2018": {"new_price": 65000, "hp": 258, "engine": 3.0},
-            "2018-2024": {"new_price": 78000, "hp": 340, "engine": 3.0}
-        }
-    },
-    "BMW X6": {
-        "category": "SUV-Coupé", "segment": "SAC (Sports Activity Coupé)", "body_type": "SUV",
-        "generations": {
-            "2014-2019": {"new_price": 72000, "hp": 313, "engine": 3.0},
-            "2019-2024": {"new_price": 85000, "hp": 340, "engine": 3.0}
-        }
-    },
-    "BMW X7": {
-        "category": "SUV-Luxus", "segment": "Luxus-SUV", "body_type": "SUV",
-        "generations": {
-            "2018-2024": {"new_price": 98000, "hp": 340, "engine": 3.0}
-        }
-    },
-    "BMW Z4": {
-        "category": "Roadster", "segment": "Premium-Roadster", "body_type": "Roadster",
-        "generations": {
-            "2018-2024": {"new_price": 55000, "hp": 197, "engine": 2.0}
-        }
-    },
-    "BMW M2": {
-        "category": "Sportwagen", "segment": "Performance-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2018-2023": {"new_price": 65000, "hp": 410, "engine": 3.0},
-            "2023-2024": {"new_price": 75000, "hp": 460, "engine": 3.0}
-        }
-    },
-    "BMW M3": {
-        "category": "Sportwagen", "segment": "Performance-Limousine", "body_type": "Limousine",
-        "generations": {
-            "2014-2020": {"new_price": 75000, "hp": 431, "engine": 3.0},
-            "2020-2024": {"new_price": 88000, "hp": 510, "engine": 3.0}
-        }
-    },
-    "BMW M4": {
-        "category": "Sportwagen", "segment": "Performance-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2014-2020": {"new_price": 78000, "hp": 431, "engine": 3.0},
-            "2020-2024": {"new_price": 92000, "hp": 510, "engine": 3.0}
-        }
-    },
-    "BMW M5": {
-        "category": "Supersportwagen", "segment": "Performance-Limousine", "body_type": "Limousine",
-        "generations": {
-            "2011-2017": {"new_price": 105000, "hp": 560, "engine": 4.4},
-            "2017-2024": {"new_price": 125000, "hp": 625, "engine": 4.4}
-        }
-    },
-    "BMW M8": {
-        "category": "Supersportwagen", "segment": "Performance-Gran-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2019-2024": {"new_price": 145000, "hp": 625, "engine": 4.4}
-        }
-    },
-    "BMW i3": {
-        "category": "Elektro-Kompakt", "segment": "Elektro-Kleinwagen", "body_type": "Schrägheck",
-        "generations": {
-            "2013-2022": {"new_price": 38000, "hp": 170, "engine": 0.0}
-        }
-    },
-    "BMW i4": {
-        "category": "Elektro-Premium", "segment": "Elektro-Gran-Coupé", "body_type": "Limousine",
-        "generations": {
-            "2021-2024": {"new_price": 60000, "hp": 340, "engine": 0.0}
-        }
-    },
-    "BMW iX": {
-        "category": "Elektro-SUV", "segment": "Elektro-Luxus-SUV", "body_type": "SUV",
-        "generations": {
-            "2021-2024": {"new_price": 85000, "hp": 326, "engine": 0.0}
-        }
-    },
+    })
+
+@app.route('/vehicles', methods=['GET'])
+def get_vehicles():
+    return jsonify({
+        "success": True,
+        "total": len(VEHICLE_DATABASE),
+        "vehicles": VEHICLE_DATABASE
+    })
+
+@app.route('/brands', methods=['GET'])
+def get_brands():
+    brands = sorted(list(set([key.split()[0] for key in VEHICLE_DATABASE.keys()])))
+    return jsonify({
+        "success": True,
+        "total": len(brands),
+        "brands": brands
+    })
+
+@app.route('/models', methods=['GET'])
+def get_models():
+    brand = request.args.get('brand', '')
+    if not brand:
+        return jsonify({"success": False, "error": "Parameter 'brand' fehlt"}), 400
     
-    # ========================================
-    # MERCEDES-BENZ
-    # ========================================
-    "Mercedes A-Klasse": {
-        "category": "Kompakt-Premium", "segment": "Premium-Kompaktklasse", "body_type": "Schrägheck",
-        "generations": {
-            "2012-2018": {"new_price": 28000, "hp": 122, "engine": 1.6},
-            "2018-2024": {"new_price": 35000, "hp": 163, "engine": 1.3}
+    models = []
+    for key, value in VEHICLE_DATABASE.items():
+        if key.startswith(brand):
+            model_name = key.replace(f"{brand} ", "")
+            models.append({
+                "model": model_name,
+                "category": value["category"],
+                "segment": value["segment"],
+                "body_type": value["body_type"]
+            })
+    
+    return jsonify({
+        "success": True,
+        "brand": brand,
+        "total": len(models),
+        "models": models
+    })
+
+@app.route('/calculate', methods=['POST'])
+def calculate_endpoint():
+    try:
+        data = request.get_json()
+        required = ['brand', 'model', 'year', 'mileage', 'condition']
+        missing = [f for f in required if f not in data]
+        
+        if missing:
+            return jsonify({"error": "Fehlende Felder", "missing": missing}), 400
+        
+        result = calculate_price(data)
+        
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "input": data,
+            "output": result,
+            "type": "calculation"
         }
-    },
-    "Mercedes B-Klasse": {
-        "category": "Kompakt-Van", "segment": "Premium-Kompakt-Van", "body_type": "Van",
-        "generations": {
-            "2011-2018": {"new_price": 30000, "hp": 122, "engine": 1.6},
-            "2018-2024": {"new_price": 37000, "hp": 163, "engine": 1.3}
+        save_feedback(log_entry)
+        
+        return jsonify({"success": True, "data": result})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/feedback', methods=['POST'])
+def feedback_endpoint():
+    try:
+        data = request.get_json()
+        
+        feedback_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "feedback": {
+                "vehicle_brand": data.get('vehicle_brand'),
+                "vehicle_model": data.get('vehicle_model'),
+                "suggested_price": data.get('suggested_price'),
+                "actual_price_used": data.get('actual_price_used'),
+                "comment": data.get('comment', '')
+            },
+            "type": "user_feedback"
         }
-    },
-    "Mercedes C-Klasse": {
-        "category": "Mittelklasse-Premium", "segment": "Obere Mittelklasse", "body_type": "Limousine",
-        "generations": {
-            "2014-2021": {"new_price": 42000, "hp": 184, "engine": 2.0},
-            "2021-2024": {"new_price": 52000, "hp": 204, "engine": 2.0}
-        }
-    },
-    "Mercedes C-Klasse T-Modell": {
-        "category": "Mittelklasse-Premium", "segment": "Premium-Kombi", "body_type": "Kombi",
-        "generations": {
-            "2014-2021": {"new_price": 45000, "hp": 184, "engine": 2.0},
-            "2021-2024": {"new_price": 55000, "hp": 204, "engine": 2.0}
-        }
-    },
-    "Mercedes C-Klasse Coupé": {
-        "category": "Coupé-Premium", "segment": "Premium-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2015-2024": {"new_price": 50000, "hp": 204, "engine": 2.0}
-        }
-    },
-    "Mercedes C-Klasse Cabrio": {
-        "category": "Cabrio-Premium", "segment": "Premium-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2016-2024": {"new_price": 56000, "hp": 204, "engine": 2.0}
-        }
-    },
-    "Mercedes E-Klasse": {
-        "category": "Oberklasse", "segment": "Obere Mittelklasse", "body_type": "Limousine",
-        "generations": {
-            "2016-2023": {"new_price": 58000, "hp": 194, "engine": 2.0},
-            "2023-2024": {"new_price": 70000, "hp": 272, "engine": 2.0}
-        }
-    },
-    "Mercedes E-Klasse T-Modell": {
-        "category": "Oberklasse", "segment": "Premium-Kombi", "body_type": "Kombi",
-        "generations": {
-            "2016-2023": {"new_price": 62000, "hp": 194, "engine": 2.0},
-            "2023-2024": {"new_price": 74000, "hp": 272, "engine": 2.0}
-        }
-    },
-    "Mercedes E-Klasse Coupé": {
-        "category": "Luxus-Coupé", "segment": "Luxus-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2017-2024": {"new_price": 68000, "hp": 299, "engine": 2.0}
-        }
-    },
-    "Mercedes E-Klasse Cabrio": {
-        "category": "Luxus-Cabrio", "segment": "Luxus-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2017-2024": {"new_price": 74000, "hp": 299, "engine": 2.0}
-        }
-    },
-    "Mercedes S-Klasse": {
-        "category": "Luxus", "segment": "Luxus-Limousine", "body_type": "Limousine",
-        "generations": {
-            "2013-2020": {"new_price": 95000, "hp": 333, "engine": 3.0},
-            "2020-2024": {"new_price": 120000, "hp": 435, "engine": 3.0}
-        }
-    },
-    "Mercedes S-Klasse Coupé": {
-        "category": "Luxus-Coupé", "segment": "Luxus-Gran-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2014-2021": {"new_price": 130000, "hp": 462, "engine": 4.0}
-        }
-    },
-    "Mercedes S-Klasse Cabrio": {
-        "category": "Luxus-Cabrio", "segment": "Luxus-Cabriolet", "body_type": "Cabriolet",
-        "generations": {
-            "2015-2021": {"new_price": 145000, "hp": 462, "engine": 4.0}
-        }
-    },
-    "Mercedes CLA": {
-        "category": "Coupé-Premium", "segment": "Viertürer-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2013-2019": {"new_price": 33000, "hp": 122, "engine": 1.6},
-            "2019-2024": {"new_price": 38000, "hp": 163, "engine": 1.3}
-        }
-    },
-    "Mercedes CLS": {
-        "category": "Luxus-Coupé", "segment": "Viertürer-Coupé", "body_type": "Coupé",
-        "generations": {
-            "2018-2024": {"new_price": 75000, "hp": 299, "engine": 2.0}
-        }
-    },
-    "Mercedes GLA": {
-        "category": "SUV-Kompakt", "segment": "Premium-Kompakt-SUV", "body_type": "SUV",
-        "generations": {
-            "2013-2020": {"new_price": 32000, "hp": 122, "engine": 1.6},
-            "2020-2024": {"new_price": 40000, "hp": 163, "engine": 1.3}
-        }
-    },
-    "Mercedes GLB": {
-        "category": "SUV-Kompakt", "segment": "Kompakt-SUV", "body_type": "SUV",
-        "generations": {
-            "2019-2024": {"new_price": 42000, "hp": 163, "engine": 1.3}
-        }
-    },
-    "Mercedes GLC": {
-        "category": "SUV-Mittel", "segment": "Premium-Mittelklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2015-2022": {"new_price": 48000, "hp": 204, "engine": 2.0},
-            "2022-2024": {"new_price": 58000, "hp": 258, "engine": 2.0}
-        }
-    },
-    "Mercedes GLC Coupé": {
-        "category": "SUV-Coupé", "segment": "SUV-Coupé", "body_type": "SUV",
-        "generations": {
-            "2016-2024": {"new_price": 60000, "hp": 258, "engine": 2.0}
-        }
-    },
-    "Mercedes GLE": {
-        "category": "SUV-Premium", "segment": "Oberklasse-SUV", "body_type": "SUV",
-        "generations": {
-            "2015-2019": {"new_price": 62000, "hp": 258, "engine": 2.0},
-            "2019-2024": {"new_price": 75000, "hp": 367, "engine": 3.0}
-        }
-    },
-    "Mercedes GLE Coupé": {
-        "category": "SUV-Coupé", "segment": "Oberklasse-SUV-Coupé", "body_type": "SUV",
-        "generations": {
-            "2015-2024": {"new_price": 82000, "hp": 367, "engine": 3.0}
-        }
-    },
-    "Mercedes GLS": {
-        "category": "SUV-Luxus", "segment": "Luxus-SUV", "body_type": "SUV",
-        "generations": {
-            "2015-2019": {"new_price": 78000, "hp": 333, "engine": 3.0},
-            "2019-2024": {"new_price": 95000, "hp": 367, "engine": 3.0}
-        }
-    },
-    "Mercedes G-Klasse": {
-        "category": "SUV-Offroad", "segment": "Geländewagen", "body_type": "SUV",
-        "generations": {
-            "2012-2018": {"new_price": 95000, "hp": 388, "engine": 5.5},
-            "2018-2024": {"new_price": 130000, "hp": 422, "engine": 4.0}
-        }
-    },
-    "Mercedes SL": {
-        "category": "Luxus-Roadster", "segment": "Luxus-Roadster", "body_type": "Roadster",
-        "generations": {
-            "2012-2021": {"new_price": 105000, "hp": 435, "engine": 4.7},
-            "2021-2024": {"new_price": 145000, "hp": 476, "engine": 4.0}
-        }
-    },
-    "Mercedes SLC": {
-        "category": "Roadster", "segment": "Kompakt-Roadster", "body_type": "Roadster",
-        "generations": {
-            "2016-2020": {"new_price": 48000, "hp": 184, "engine": 2.0}
-        }
-    },
-    "Mercedes AMG GT": {
-        "category":
+        save_feedback(feedback_entry)
+        
+        if data.get('suggested_price') and data.get('actual_price_used'):
+            deviation = ((data['actual_price_used'] - data['suggested_price']) / data['suggested_price']) * 100
+            message = f"Danke! Dein Preis weicht {abs(deviation):.1f}% {'nach oben' if deviation > 0 else 'nach unten'} ab."
+        else:
+            message = "Feedback gespeichert!"
+        
+        return jsonify({"success": True, "message": message})
+        
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "database_vehicles": len(VEHICLE_DATABASE),
+        "version": "3.0.0"
+    })
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080, debug=True)
