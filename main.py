@@ -502,4 +502,4 @@ VEHICLE_DATABASE = {
         }
     },
     "Mercedes AMG GT": {
-        "category": "
+        "category":
