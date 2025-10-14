@@ -304,7 +304,7 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "vehicles_loaded": len(VEHICLE_DATABASE)
-    })
+    }) 
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
