@@ -99,6 +99,11 @@ def calculate_price(brand, model, year, mileage, condition):
     if not vehicle:
         return None
     
+    # BAUJAHR-VALIDIERUNG
+    if 'year_start' in vehicle and 'year_end' in vehicle:
+        if year < vehicle['year_start'] or year > vehicle['year_end']:
+            return None  # Fahrzeug gab es in diesem Baujahr nicht
+    
     category = vehicle["category"]
     base_rate = BASE_HOURLY_RATES.get(category, 15.0)
     
@@ -133,6 +138,12 @@ def calculate_price(brand, model, year, mileage, condition):
     elif category == "Luxuslimousine":
         rarity_bonus = 1.1
     
+    # CUSTOM MULTIPLIERS aus der Datenbank
+    custom_rarity = vehicle.get("rarity_multiplier", 1.0)
+    demand_factor = vehicle.get("demand_factor", 1.0)
+    premium_package_bonus = 1.15 if vehicle.get("premium_package", False) else 1.0
+    facelift_bonus = 1.05 if vehicle.get("facelift", False) else 1.0
+    
     hourly_price = (
         base_rate * 
         depreciation * 
@@ -142,7 +153,11 @@ def calculate_price(brand, model, year, mileage, condition):
         hp_factor * 
         body_bonus * 
         electric_bonus * 
-        rarity_bonus
+        rarity_bonus *
+        custom_rarity *
+        demand_factor *
+        premium_package_bonus *
+        facelift_bonus
     )
     
     hourly_price = round(hourly_price * 2) / 2
@@ -304,7 +319,9 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "vehicles_loaded": len(VEHICLE_DATABASE)
-    }) 
+    })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    import os
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
