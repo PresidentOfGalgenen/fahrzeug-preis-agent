@@ -5,6 +5,12 @@ from datetime import datetime
 import math
 
 app = Flask(__name__)
+CORS(app)
+```
+
+5. **Öffne `requirements.txt`** → Füge hinzu:
+```
+flask-cors==4.0.0
 
 # CORS aktivieren - erlaubt Zugriff von allen Domains
 CORS(app)
