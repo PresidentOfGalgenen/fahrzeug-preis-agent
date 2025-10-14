@@ -6,15 +6,15 @@ import math
 
 app = Flask(__name__)
 CORS(app)
+
+# Rest des Codes...
 ```
 
-5. **Öffne `requirements.txt`** → Füge hinzu:
+### **In der `requirements.txt`:**
 ```
+Flask==3.0.0
 flask-cors==4.0.0
-
-# CORS aktivieren - erlaubt Zugriff von allen Domains
-CORS(app)
-
+gunicorn==21.2.0
 # Konstanten für die Preisberechnung
 DEPRECIATION_RATES = {
     0: 1.0,
