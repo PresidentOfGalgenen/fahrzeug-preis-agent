@@ -7,15 +7,6 @@ import math
 app = Flask(__name__)
 CORS(app)
 
-# Rest des Codes...
-```
-
-### **In der `requirements.txt`:**
-```
-Flask==3.0.0
-flask-cors==4.0.0
-gunicorn==21.2.0
-# Konstanten für die Preisberechnung
 DEPRECIATION_RATES = {
     0: 1.0,
     1: 0.85,
@@ -60,28 +51,24 @@ BODY_STYLE_BONUSES = {
 }
 
 def get_depreciation_factor(age):
-    """Berechnet den Abschreibungsfaktor basierend auf dem Alter"""
     for year_threshold in sorted(DEPRECIATION_RATES.keys(), reverse=True):
         if age >= year_threshold:
             return DEPRECIATION_RATES[year_threshold]
     return 1.0
 
 def get_mileage_factor(mileage):
-    """Berechnet den Kilometerfaktor"""
     for km_threshold in sorted(MILEAGE_FACTORS.keys(), reverse=True):
         if mileage >= km_threshold:
             return MILEAGE_FACTORS[km_threshold]
     return 1.0
 
 def find_vehicle(brand, model):
-    """Findet ein Fahrzeug in der Datenbank"""
     for vehicle in VEHICLE_DATABASE:
         if vehicle["brand"].lower() == brand.lower() and vehicle["model"].lower() == model.lower():
             return vehicle
     return None
 
 def calculate_confidence(vehicle, year, mileage, condition):
-    """Berechnet einen Confidence-Score (0-100)"""
     score = 100
     current_year = datetime.now().year
     age = current_year - year
@@ -107,7 +94,6 @@ def calculate_confidence(vehicle, year, mileage, condition):
     return max(0, min(100, score))
 
 def calculate_price(brand, model, year, mileage, condition):
-    """Hauptfunktion zur Preisberechnung"""
     vehicle = find_vehicle(brand, model)
     
     if not vehicle:
