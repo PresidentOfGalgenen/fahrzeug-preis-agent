@@ -7,6 +7,7 @@ import math
 app = Flask(__name__)
 CORS(app)
 
+# Abschreibungsraten (unverändert)
 DEPRECIATION_RATES = {
     0: 1.0,
     1: 0.85,
@@ -19,15 +20,17 @@ DEPRECIATION_RATES = {
     20: 0.20
 }
 
-# KILOMETERSTAND-FAKTOR ENTFERNT - wird nicht mehr verwendet!
+# Kilometerstand wird NICHT MEHR berücksichtigt!
 
+# Neue Zustandsfaktoren (aus neuem Code)
 CONDITION_MULTIPLIERS = {
-    "Einwandfrei": 1.15,      # +15% für perfekten Zustand
-    "Sehr gut": 1.0,          # Basis
-    "Gut": 0.85,              # -15%
-    "Akzeptabel": 0.70        # -30%
+    "Einwandfrei": 1.15,
+    "Sehr gut": 1.0,
+    "Gut": 0.85,
+    "Akzeptabel": 0.70
 }
 
+# Karosseriebonus (leicht modernisiert)
 BODY_STYLE_BONUSES = {
     "Cabrio": 1.15,
     "Roadster": 1.15,
@@ -39,11 +42,16 @@ BODY_STYLE_BONUSES = {
     "Limousine": 1.0
 }
 
+# ------------------------------------------------
+# Hilfsfunktionen
+# ------------------------------------------------
+
 def get_depreciation_factor(age):
     for year_threshold in sorted(DEPRECIATION_RATES.keys(), reverse=True):
         if age >= year_threshold:
             return DEPRECIATION_RATES[year_threshold]
     return 1.0
+
 
 def find_vehicle(brand, model):
     for vehicle in VEHICLE_DATABASE:
@@ -51,52 +59,56 @@ def find_vehicle(brand, model):
             return vehicle
     return None
 
+
 def calculate_confidence(vehicle, year, mileage, condition):
+    """Confidence berechnet nur noch basierend auf Alter + Zustand."""
     score = 100
     current_year = datetime.now().year
     age = current_year - year
-    
-    # Alter-basierte Anpassung
+
+    # Altersfaktor
     if age > 15:
         score -= 20
     elif age > 10:
         score -= 10
-    
-    # KILOMETERSTAND WIRD IGNORIERT - nicht mehr Teil der Confidence
-    
-    # Zustand-basierte Anpassung
+
+    # Zustandseinfluss
     if condition == "Akzeptabel":
         score -= 15
     elif condition == "Gut":
         score -= 5
     # "Sehr gut" und "Einwandfrei" = keine Abzüge
-    
-    # Bonus für Premium-Fahrzeuge
+
+    # Bonus für Premiumfahrzeuge
     if vehicle["category"] in ["Supersportwagen", "Luxuslimousine"]:
         score += 10
-    
+
     return max(0, min(100, score))
+
+
+# ------------------------------------------------
+# Preisberechnung
+# ------------------------------------------------
 
 def calculate_price(brand, model, year, mileage, condition):
     vehicle = find_vehicle(brand, model)
-    
     if not vehicle:
         return None
-    
-    # BAUJAHR-VALIDIERUNG
+
+    # Baujahr prüfen
     if 'year_start' in vehicle and 'year_end' in vehicle:
         if year < vehicle['year_start'] or year > vehicle['year_end']:
-            return None  # Fahrzeug gab es in diesem Baujahr nicht
-    
+            return None
+
     category = vehicle["category"]
     base_rate = BASE_HOURLY_RATES.get(category, 15.0)
-    
+
     current_year = datetime.now().year
     age = max(0, current_year - year)
-    
+
     depreciation = get_depreciation_factor(age)
-    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.85)  # Default: "Gut"
-    
+    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.85)
+
     new_price = vehicle["new_price"]
     price_multiplier = 1.0
     if new_price > 200000:
@@ -105,51 +117,49 @@ def calculate_price(brand, model, year, mileage, condition):
         price_multiplier = 1.3
     elif new_price > 50000:
         price_multiplier = 1.1
-    
+
     hp = vehicle.get("hp", 150)
     hp_factor = 1.0 + ((hp - 150) / 1000)
-    
+
     body_style = vehicle.get("body_style", "Limousine")
     body_bonus = BODY_STYLE_BONUSES.get(body_style, 1.0)
-    
+
     is_electric = vehicle.get("engine_displacement", 0) == 0
     electric_bonus = 1.1 if is_electric else 1.0
-    
+
     rarity_bonus = 1.0
     if category in ["Supersportwagen", "Hypersportwagen"]:
         rarity_bonus = 1.2
     elif category == "Luxuslimousine":
         rarity_bonus = 1.1
-    
-    # CUSTOM MULTIPLIERS aus der Datenbank
+
+    # Zusätzliche Fahrzeugfaktoren aus Datenbank
     custom_rarity = vehicle.get("rarity_multiplier", 1.0)
     demand_factor = vehicle.get("demand_factor", 1.0)
     premium_package_bonus = 1.15 if vehicle.get("premium_package", False) else 1.0
     facelift_bonus = 1.05 if vehicle.get("facelift", False) else 1.0
-    
-    # KILOMETERSTAND-FAKTOR ENTFERNT!
+
+    # Kilometer-Faktor entfernt!
     hourly_price = (
-        base_rate * 
-        depreciation * 
-        condition_factor *  # Zustand hat jetzt größeren Einfluss (0.70 - 1.15)
-        price_multiplier * 
-        hp_factor * 
-        body_bonus * 
-        electric_bonus * 
+        base_rate *
+        depreciation *
+        condition_factor *
+        price_multiplier *
+        hp_factor *
+        body_bonus *
+        electric_bonus *
         rarity_bonus *
         custom_rarity *
         demand_factor *
         premium_package_bonus *
         facelift_bonus
     )
-    
+
     hourly_price = round(hourly_price * 2) / 2
-    
     daily_price = hourly_price * 8 * 0.8
     weekly_price = daily_price * 7 * 0.7
-    
+
     confidence = calculate_confidence(vehicle, year, mileage, condition)
-    
     if confidence >= 90:
         confidence_label = "sehr hoch"
     elif confidence >= 75:
@@ -158,7 +168,7 @@ def calculate_price(brand, model, year, mileage, condition):
         confidence_label = "mittel"
     else:
         confidence_label = "niedrig"
-    
+
     return {
         "suggested_price_per_hour": hourly_price,
         "suggested_price_per_day": daily_price,
@@ -177,17 +187,23 @@ def calculate_price(brand, model, year, mileage, condition):
             "depreciation_factor": depreciation,
             "condition_factor": condition_factor,
             "age_years": age,
-            "note": "Kilometerstand wird ignoriert - nur Zustand beeinflusst Preis"
+            "note": "Kilometerstand wird ignoriert – nur Zustand und Alter wirken sich aus."
         },
         "confidence_score": confidence,
         "confidence": confidence_label
     }
 
+
+# ------------------------------------------------
+# Flask-Routen
+# ------------------------------------------------
+
 @app.route('/')
 def home():
     return jsonify({
         "message": "Base44 Fahrzeugpreis-Agent API",
-        "version": "2.0",
+        "version": "2.1",
+        "note": "Kilometerstand entfernt, aktualisierte Zustandsfaktoren aktiv",
         "endpoints": {
             "POST /calculate": "Berechne Mietpreis",
             "GET /vehicles": "Liste aller Fahrzeuge",
@@ -195,74 +211,60 @@ def home():
             "GET /models?brand=X": "Modelle einer Marke",
             "POST /feedback": "Feedback senden",
             "GET /health": "Health Check"
-        },
-        "features": [
-            "150+ Fahrzeuge",
-            "15-Faktoren-Algorithmus",
-            "CORS aktiviert"
-        ]
+        }
     })
+
 
 @app.route('/calculate', methods=['POST', 'GET'])
 def calculate():
     try:
-        # GET-Request: Parameter aus URL
         if request.method == 'GET':
             brand = request.args.get('brand')
             model = request.args.get('model')
             year = request.args.get('year', type=int)
-            mileage = request.args.get('mileage', type=int)
+            mileage = request.args.get('mileage', type=int, default=0)
             condition = request.args.get('condition', 'Gut')
-            
-            if not all([brand, model, year, mileage]):
+
+            if not all([brand, model, year]):
                 return jsonify({
                     "success": False,
-                    "error": "Fehlende Parameter: brand, model, year, mileage erforderlich"
+                    "error": "Fehlende Parameter: brand, model, year erforderlich"
                 }), 400
-        
-        # POST-Request: JSON-Body
+
         else:
             data = request.get_json()
-            
-            required_fields = ['brand', 'model', 'year', 'mileage', 'condition']
+            required_fields = ['brand', 'model', 'year', 'condition']
             for field in required_fields:
                 if field not in data:
                     return jsonify({
                         "success": False,
                         "error": f"Fehlendes Feld: {field}"
                     }), 400
-            
+
             brand = data['brand']
             model = data['model']
             year = data['year']
-            mileage = data['mileage']
+            mileage = data.get('mileage', 0)
             condition = data['condition']
-        
+
         result = calculate_price(brand, model, year, mileage, condition)
-        
         if result is None:
             return jsonify({
                 "success": False,
                 "error": "Fahrzeug nicht gefunden oder Baujahr nicht verfügbar"
             }), 404
-        
-        # Mappe die Feldnamen für Kompatibilität
+
         return jsonify({
             "success": True,
-            "hourly": result["suggested_price_per_hour"],
-            "daily": result["suggested_price_per_day"],
-            "weekly": result["suggested_price_per_week"],
-            "confidence": result["confidence_score"],
-            "confidence_label": result["confidence"],
-            "vehicle_info": result["vehicle_info"],
-            "calculation_details": result["calculation_details"]
+            **result
         })
-    
+
     except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
+
 
 @app.route('/vehicles', methods=['GET'])
 def get_vehicles():
@@ -271,6 +273,7 @@ def get_vehicles():
         "count": len(VEHICLE_DATABASE),
         "vehicles": VEHICLE_DATABASE
     })
+
 
 @app.route('/brands', methods=['GET'])
 def get_brands():
@@ -281,6 +284,7 @@ def get_brands():
         "brands": brands
     })
 
+
 @app.route('/models', methods=['GET'])
 def get_models():
     brand = request.args.get('brand')
@@ -289,12 +293,11 @@ def get_models():
             "success": False,
             "error": "Parameter 'brand' fehlt"
         }), 400
-    
+
     models = sorted(set(
-        v["model"] for v in VEHICLE_DATABASE 
+        v["model"] for v in VEHICLE_DATABASE
         if v["brand"].lower() == brand.lower()
     ))
-    
     return jsonify({
         "success": True,
         "brand": brand,
@@ -302,37 +305,22 @@ def get_models():
         "models": models
     })
 
-@app.route('/models/<brand>', methods=['GET'])
-def get_models_by_path(brand):
-    """Alternative Route mit Path Parameter statt Query Parameter"""
-    models = sorted(set(
-        v["model"] for v in VEHICLE_DATABASE 
-        if v["brand"].lower() == brand.lower()
-    ))
-    
-    return jsonify({
-        "success": True,
-        "brand": brand,
-        "count": len(models),
-        "models": models
-    })
 
 @app.route('/feedback', methods=['POST'])
 def feedback():
     try:
         data = request.get_json()
         print(f"Feedback received: {data}")
-        
         return jsonify({
             "success": True,
             "message": "Feedback gespeichert (aktuell nur geloggt)"
         })
-    
     except Exception as e:
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
+
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -341,6 +329,7 @@ def health():
         "timestamp": datetime.now().isoformat(),
         "vehicles_loaded": len(VEHICLE_DATABASE)
     })
+
 
 if __name__ == '__main__':
     import os
