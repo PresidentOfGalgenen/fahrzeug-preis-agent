@@ -220,36 +220,52 @@ def home():
         ]
     })
 
-@app.route('/calculate', methods=['POST'])
+@app.route('/calculate', methods=['POST', 'GET'])
 def calculate():
     try:
-        data = request.get_json()
-        
-        required_fields = ['brand', 'model', 'year', 'mileage', 'condition']
-        for field in required_fields:
-            if field not in data:
+        # GET-Request: Parameter aus URL
+        if request.method == 'GET':
+            brand = request.args.get('brand')
+            model = request.args.get('model')
+            year = request.args.get('year', type=int)
+            mileage = request.args.get('mileage', type=int)
+            condition = request.args.get('condition', 'Gut')
+            
+            if not all([brand, model, year, mileage]):
                 return jsonify({
                     "success": False,
-                    "error": f"Fehlendes Feld: {field}"
+                    "error": "Fehlende Parameter: brand, model, year, mileage erforderlich"
                 }), 400
         
-        result = calculate_price(
-            data['brand'],
-            data['model'],
-            data['year'],
-            data['mileage'],
-            data['condition']
-        )
+        # POST-Request: JSON-Body
+        else:
+            data = request.get_json()
+            
+            required_fields = ['brand', 'model', 'year', 'mileage', 'condition']
+            for field in required_fields:
+                if field not in data:
+                    return jsonify({
+                        "success": False,
+                        "error": f"Fehlendes Feld: {field}"
+                    }), 400
+            
+            brand = data['brand']
+            model = data['model']
+            year = data['year']
+            mileage = data['mileage']
+            condition = data['condition']
+        
+        result = calculate_price(brand, model, year, mileage, condition)
         
         if result is None:
             return jsonify({
                 "success": False,
-                "error": "Fahrzeug nicht gefunden"
+                "error": "Fahrzeug nicht gefunden oder Baujahr nicht verfügbar"
             }), 404
         
         return jsonify({
             "success": True,
-            "data": result
+            **result
         })
     
     except Exception as e:
@@ -284,6 +300,21 @@ def get_models():
             "error": "Parameter 'brand' fehlt"
         }), 400
     
+    models = sorted(set(
+        v["model"] for v in VEHICLE_DATABASE 
+        if v["brand"].lower() == brand.lower()
+    ))
+    
+    return jsonify({
+        "success": True,
+        "brand": brand,
+        "count": len(models),
+        "models": models
+    })
+
+@app.route('/models/<brand>', methods=['GET'])
+def get_models_by_path(brand):
+    """Alternative Route mit Path Parameter statt Query Parameter"""
     models = sorted(set(
         v["model"] for v in VEHICLE_DATABASE 
         if v["brand"].lower() == brand.lower()
