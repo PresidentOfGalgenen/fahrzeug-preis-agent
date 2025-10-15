@@ -19,24 +19,13 @@ DEPRECIATION_RATES = {
     20: 0.20
 }
 
-MILEAGE_FACTORS = {
-    5000: 1.0,
-    10000: 0.98,
-    20000: 0.95,
-    30000: 0.92,
-    50000: 0.88,
-    75000: 0.83,
-    100000: 0.78,
-    150000: 0.70,
-    200000: 0.62,
-    300000: 0.50
-}
+# KILOMETERSTAND-FAKTOR ENTFERNT - wird nicht mehr verwendet!
 
 CONDITION_MULTIPLIERS = {
-    "Sehr gut": 1.0,
-    "Gut": 0.90,
-    "Mittel": 0.80,
-    "Schlecht": 0.65
+    "Einwandfrei": 1.15,      # +15% für perfekten Zustand
+    "Sehr gut": 1.0,          # Basis
+    "Gut": 0.85,              # -15%
+    "Akzeptabel": 0.70        # -30%
 }
 
 BODY_STYLE_BONUSES = {
@@ -56,12 +45,6 @@ def get_depreciation_factor(age):
             return DEPRECIATION_RATES[year_threshold]
     return 1.0
 
-def get_mileage_factor(mileage):
-    for km_threshold in sorted(MILEAGE_FACTORS.keys(), reverse=True):
-        if mileage >= km_threshold:
-            return MILEAGE_FACTORS[km_threshold]
-    return 1.0
-
 def find_vehicle(brand, model):
     for vehicle in VEHICLE_DATABASE:
         if vehicle["brand"].lower() == brand.lower() and vehicle["model"].lower() == model.lower():
@@ -73,21 +56,22 @@ def calculate_confidence(vehicle, year, mileage, condition):
     current_year = datetime.now().year
     age = current_year - year
     
+    # Alter-basierte Anpassung
     if age > 15:
         score -= 20
     elif age > 10:
         score -= 10
     
-    if mileage > 200000:
-        score -= 20
-    elif mileage > 150000:
-        score -= 10
+    # KILOMETERSTAND WIRD IGNORIERT - nicht mehr Teil der Confidence
     
-    if condition == "Schlecht":
+    # Zustand-basierte Anpassung
+    if condition == "Akzeptabel":
         score -= 15
-    elif condition == "Mittel":
+    elif condition == "Gut":
         score -= 5
+    # "Sehr gut" und "Einwandfrei" = keine Abzüge
     
+    # Bonus für Premium-Fahrzeuge
     if vehicle["category"] in ["Supersportwagen", "Luxuslimousine"]:
         score += 10
     
@@ -111,8 +95,7 @@ def calculate_price(brand, model, year, mileage, condition):
     age = max(0, current_year - year)
     
     depreciation = get_depreciation_factor(age)
-    mileage_factor = get_mileage_factor(mileage)
-    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.9)
+    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.85)  # Default: "Gut"
     
     new_price = vehicle["new_price"]
     price_multiplier = 1.0
@@ -144,11 +127,11 @@ def calculate_price(brand, model, year, mileage, condition):
     premium_package_bonus = 1.15 if vehicle.get("premium_package", False) else 1.0
     facelift_bonus = 1.05 if vehicle.get("facelift", False) else 1.0
     
+    # KILOMETERSTAND-FAKTOR ENTFERNT!
     hourly_price = (
         base_rate * 
         depreciation * 
-        mileage_factor * 
-        condition_factor * 
+        condition_factor *  # Zustand hat jetzt größeren Einfluss (0.70 - 1.15)
         price_multiplier * 
         hp_factor * 
         body_bonus * 
@@ -192,9 +175,9 @@ def calculate_price(brand, model, year, mileage, condition):
         "calculation_details": {
             "base_rate": base_rate,
             "depreciation_factor": depreciation,
-            "mileage_factor": mileage_factor,
             "condition_factor": condition_factor,
-            "age_years": age
+            "age_years": age,
+            "note": "Kilometerstand wird ignoriert - nur Zustand beeinflusst Preis"
         },
         "confidence_score": confidence,
         "confidence": confidence_label
@@ -263,9 +246,16 @@ def calculate():
                 "error": "Fahrzeug nicht gefunden oder Baujahr nicht verfügbar"
             }), 404
         
+        # Mappe die Feldnamen für Kompatibilität
         return jsonify({
             "success": True,
-            **result
+            "hourly": result["suggested_price_per_hour"],
+            "daily": result["suggested_price_per_day"],
+            "weekly": result["suggested_price_per_week"],
+            "confidence": result["confidence_score"],
+            "confidence_label": result["confidence"],
+            "vehicle_info": result["vehicle_info"],
+            "calculation_details": result["calculation_details"]
         })
     
     except Exception as e:
