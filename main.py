@@ -19,24 +19,12 @@ DEPRECIATION_RATES = {
     20: 0.20
 }
 
-MILEAGE_FACTORS = {
-    5000: 1.0,
-    10000: 0.98,
-    20000: 0.95,
-    30000: 0.92,
-    50000: 0.88,
-    75000: 0.83,
-    100000: 0.78,
-    150000: 0.70,
-    200000: 0.62,
-    300000: 0.50
-}
-
+# NEUE ZUSTÄNDE mit größerem Einfluss
 CONDITION_MULTIPLIERS = {
-    "Sehr gut": 1.0,
-    "Gut": 0.90,
-    "Mittel": 0.80,
-    "Schlecht": 0.65
+    "Einwandfrei": 1.15,      # +15% für perfekten Zustand
+    "Sehr gut": 1.0,          # Basis
+    "Gut": 0.85,              # -15%
+    "Akzeptabel": 0.70        # -30%
 }
 
 BODY_STYLE_BONUSES = {
@@ -56,44 +44,39 @@ def get_depreciation_factor(age):
             return DEPRECIATION_RATES[year_threshold]
     return 1.0
 
-def get_mileage_factor(mileage):
-    for km_threshold in sorted(MILEAGE_FACTORS.keys(), reverse=True):
-        if mileage >= km_threshold:
-            return MILEAGE_FACTORS[km_threshold]
-    return 1.0
-
 def find_vehicle(brand, model):
     for vehicle in VEHICLE_DATABASE:
         if vehicle["brand"].lower() == brand.lower() and vehicle["model"].lower() == model.lower():
             return vehicle
     return None
 
-def calculate_confidence(vehicle, year, mileage, condition):
+def calculate_confidence(vehicle, year, condition):
+    """Confidence-Berechnung OHNE Kilometerstand"""
     score = 100
     current_year = datetime.now().year
     age = current_year - year
     
+    # Alter-basierte Anpassung
     if age > 15:
         score -= 20
     elif age > 10:
         score -= 10
     
-    if mileage > 200000:
-        score -= 20
-    elif mileage > 150000:
-        score -= 10
-    
-    if condition == "Schlecht":
+    # Zustand-basierte Anpassung
+    if condition == "Akzeptabel":
         score -= 15
-    elif condition == "Mittel":
+    elif condition == "Gut":
         score -= 5
+    # "Sehr gut" und "Einwandfrei" = keine Abzüge
     
+    # Bonus für Premium-Fahrzeuge
     if vehicle["category"] in ["Supersportwagen", "Luxuslimousine"]:
         score += 10
     
     return max(0, min(100, score))
 
-def calculate_price(brand, model, year, mileage, condition):
+def calculate_price(brand, model, year, condition):
+    """Preisberechnung OHNE Kilometerstand - nur Zustand beeinflusst Preis"""
     vehicle = find_vehicle(brand, model)
     
     if not vehicle:
@@ -111,8 +94,7 @@ def calculate_price(brand, model, year, mileage, condition):
     age = max(0, current_year - year)
     
     depreciation = get_depreciation_factor(age)
-    mileage_factor = get_mileage_factor(mileage)
-    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.9)
+    condition_factor = CONDITION_MULTIPLIERS.get(condition, 0.85)  # Default: "Gut"
     
     new_price = vehicle["new_price"]
     price_multiplier = 1.0
@@ -144,11 +126,11 @@ def calculate_price(brand, model, year, mileage, condition):
     premium_package_bonus = 1.15 if vehicle.get("premium_package", False) else 1.0
     facelift_bonus = 1.05 if vehicle.get("facelift", False) else 1.0
     
+    # HAUPTBERECHNUNG - OHNE Kilometerstand-Faktor!
     hourly_price = (
         base_rate * 
         depreciation * 
-        mileage_factor * 
-        condition_factor * 
+        condition_factor *  # Zustand hat jetzt größeren Einfluss (0.70 - 1.15)
         price_multiplier * 
         hp_factor * 
         body_bonus * 
@@ -165,7 +147,7 @@ def calculate_price(brand, model, year, mileage, condition):
     daily_price = hourly_price * 8 * 0.8
     weekly_price = daily_price * 7 * 0.7
     
-    confidence = calculate_confidence(vehicle, year, mileage, condition)
+    confidence = calculate_confidence(vehicle, year, condition)
     
     if confidence >= 90:
         confidence_label = "sehr hoch"
@@ -192,9 +174,9 @@ def calculate_price(brand, model, year, mileage, condition):
         "calculation_details": {
             "base_rate": base_rate,
             "depreciation_factor": depreciation,
-            "mileage_factor": mileage_factor,
             "condition_factor": condition_factor,
-            "age_years": age
+            "age_years": age,
+            "note": "Kilometerstand wird ignoriert - nur Zustand beeinflusst Preis"
         },
         "confidence_score": confidence,
         "confidence": confidence_label
@@ -204,7 +186,7 @@ def calculate_price(brand, model, year, mileage, condition):
 def home():
     return jsonify({
         "message": "Base44 Fahrzeugpreis-Agent API",
-        "version": "2.0",
+        "version": "2.1",
         "endpoints": {
             "POST /calculate": "Berechne Mietpreis",
             "GET /vehicles": "Liste aller Fahrzeuge",
@@ -215,8 +197,8 @@ def home():
         },
         "features": [
             "150+ Fahrzeuge",
-            "15-Faktoren-Algorithmus",
-            "CORS aktiviert"
+            "Generationen & Facelifts",
+            "Zustandsbasierte Preisberechnung (ohne Kilometerstand)"
         ]
     })
 
@@ -228,20 +210,22 @@ def calculate():
             brand = request.args.get('brand')
             model = request.args.get('model')
             year = request.args.get('year', type=int)
-            mileage = request.args.get('mileage', type=int)
             condition = request.args.get('condition', 'Gut')
             
-            if not all([brand, model, year, mileage]):
+            # KRITISCH: mileage ist jetzt OPTIONAL und wird ignoriert
+            mileage = request.args.get('mileage', type=int, default=0)  # Default = 0
+            
+            if not all([brand, model, year]):  # ✅ MILEAGE ENTFERNT!
                 return jsonify({
                     "success": False,
-                    "error": "Fehlende Parameter: brand, model, year, mileage erforderlich"
+                    "error": "Fehlende Parameter: brand, model, year erforderlich"
                 }), 400
         
         # POST-Request: JSON-Body
         else:
             data = request.get_json()
             
-            required_fields = ['brand', 'model', 'year', 'mileage', 'condition']
+            required_fields = ['brand', 'model', 'year', 'condition']  # ✅ MILEAGE ENTFERNT!
             for field in required_fields:
                 if field not in data:
                     return jsonify({
@@ -252,10 +236,11 @@ def calculate():
             brand = data['brand']
             model = data['model']
             year = data['year']
-            mileage = data['mileage']
             condition = data['condition']
+            # mileage wird ignoriert, auch wenn es mitgeschickt wird
         
-        result = calculate_price(brand, model, year, mileage, condition)
+        # BERECHNUNG - ohne mileage Parameter!
+        result = calculate_price(brand, model, year, condition)
         
         if result is None:
             return jsonify({
@@ -263,9 +248,16 @@ def calculate():
                 "error": "Fahrzeug nicht gefunden oder Baujahr nicht verfügbar"
             }), 404
         
+        # Mappe die Feldnamen für Kompatibilität
         return jsonify({
             "success": True,
-            **result
+            "hourly": result["suggested_price_per_hour"],
+            "daily": result["suggested_price_per_day"],
+            "weekly": result["suggested_price_per_week"],
+            "confidence": result["confidence_score"],
+            "confidence_label": result["confidence"],
+            "vehicle_info": result["vehicle_info"],
+            "calculation_details": result["calculation_details"]
         })
     
     except Exception as e:
