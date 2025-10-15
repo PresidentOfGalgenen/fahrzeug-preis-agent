@@ -287,6 +287,41 @@ def get_brands():
 
 @app.route('/models', methods=['GET'])
 def get_models():
+    try:
+        brand = request.args.get('brand')
+        if not brand:
+            return jsonify({
+                "success": False,
+                "error": "Parameter 'brand' fehlt"
+            }), 400
+
+        # robustere Marken-Erkennung (alte Logik übernommen)
+        normalized_brand = brand.strip().lower().replace("-", " ").replace("–", " ")
+
+        models = sorted(set(
+            v["model"] for v in VEHICLE_DATABASE
+            if normalized_brand in v["brand"].lower().replace("-", " ").replace("–", " ")
+        ))
+
+        if not models:
+            return jsonify({
+                "success": False,
+                "error": f"Keine Modelle für Marke '{brand}' gefunden"
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "brand": brand,
+            "count": len(models),
+            "models": models
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
     brand = request.args.get('brand')
     if not brand:
         return jsonify({
